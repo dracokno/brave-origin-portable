@@ -147,7 +147,7 @@ echo       if ^(-not ^(Test-Path $destPath^)^) {
 echo         New-Item -ItemType Directory -Path $destPath -Force ^| Out-Null
 echo       }
 echo     } else {
-echo       $protectedFiles = @^("chrome++.ini","debloat.reg","update.bat","policy.json"^)
+echo       $protectedFiles = @^("chrome++.ini","debloat.reg","update.bat"^)
 echo       if ^($_.Name -in $protectedFiles -and ^(Test-Path $destPath^)^) {
 echo         Write-Host "  Skipping protected file: $^($_.Name^)" -ForegroundColor Gray
 echo       } else {

@@ -152,12 +152,6 @@ jobs:
         Copy-Item "$env:GITHUB_WORKSPACE\chrome++.ini" "$applicationPath\chrome++.ini" -Force
         Copy-Item "$env:GITHUB_WORKSPACE\update.bat" "$applicationPath\update.bat" -Force
         Copy-Item "$env:GITHUB_WORKSPACE\debloat.reg" "$applicationPath\debloat.reg" -Force
-
-        # Copy policy file 
-        Write-Host "Copying policy file..." -ForegroundColor Yellow
-        $managedPolicyDir = "$applicationPath\policies\managed"
-        New-Item -ItemType Directory -Path $managedPolicyDir -Force | Out-Null
-        Copy-Item "$env:GITHUB_WORKSPACE\policy.json" "$managedPolicyDir\policy.json" -Force
         
         # Extract Chrome++
         Write-Host "Extracting Chrome++..." -ForegroundColor Yellow
