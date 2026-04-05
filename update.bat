@@ -1,6 +1,6 @@
 @echo off
 setlocal
-echo Brave Portable Updater v1.1 (Permission-Fixed)
+echo Brave Portable Updater
 echo ===============================
 echo.
 (
@@ -55,7 +55,7 @@ echo   if ^($continue -ne 'y' -and $continue -ne 'Y'^) { exit }
 echo }
 echo.
 echo $bravePath = Join-Path "%~dp0" "brave.exe"
-echo $apiUrl = "https://api.github.com/repos/4gentc/brave-portable/releases"
+echo $apiUrl = "https://api.github.com/repos/callmenet/brave-portable/releases"
 echo $tempDir = Join-Path $env:TEMP "BraveUpdate"
 echo.
 echo try {
@@ -147,7 +147,7 @@ echo       if ^(-not ^(Test-Path $destPath^)^) {
 echo         New-Item -ItemType Directory -Path $destPath -Force ^| Out-Null
 echo       }
 echo     } else {
-echo       $protectedFiles = @^("chrome++.ini","debloat.reg","update.bat"^)
+echo       $protectedFiles = @^("chrome++.ini","debloat.reg","update.bat","policy.json"^)
 echo       if ^($_.Name -in $protectedFiles -and ^(Test-Path $destPath^)^) {
 echo         Write-Host "  Skipping protected file: $^($_.Name^)" -ForegroundColor Gray
 echo       } else {
@@ -155,8 +155,9 @@ echo         $destFolder = Split-Path $destPath -Parent
 echo         if ^(-not ^(Test-Path $destFolder^)^) {
 echo           New-Item -ItemType Directory -Path $destFolder -Force ^| Out-Null
 echo         }
+echo         $fileItem = $_
 echo         Invoke-WithRetry -ScriptBlock {
-echo           Copy-Item $_.FullName -Destination $destPath -Force -ErrorAction Stop
+echo           Copy-Item $fileItem.FullName -Destination $destPath -Force -ErrorAction Stop
 echo         } -MaxRetries 3 -DelaySeconds 1
 echo       }
 echo     }
