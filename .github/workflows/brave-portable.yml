@@ -1,14 +1,27 @@
 name: Brave Portable Auto Builder
 on:
   schedule:
-    - cron: '0 0 * * 0'  # Run every Sunday at midnight
-  workflow_dispatch:  # Allow manual runs
+    - cron: '0 0 * * 0'
+  workflow_dispatch:
 permissions:
   contents: write
   packages: write
 jobs:
   check-and-build:
     runs-on: windows-latest
+    strategy:
+      matrix:
+        include:
+          - arch: x64
+            brave_url: 'https://laptop-updates.brave.com/latest/winx64'
+            app_path: 'C:\Program Files\BraveSoftware\Brave-Browser\Application'
+            setdll_exe: 'setdll-x64.exe'
+            version_dll: 'version-x64.dll'
+          - arch: x86
+            brave_url: 'https://laptop-updates.brave.com/latest/winia32'
+            app_path: 'C:\Program Files (x86)\BraveSoftware\Brave-Browser\Application'
+            setdll_exe: 'setdll-x86.exe'
+            version_dll: 'version-x86.dll'
     
     steps:
     - name: Checkout repository
@@ -19,13 +32,13 @@ jobs:
       shell: powershell
       run: |
         try {
-          $braveUrl = "https://laptop-updates.brave.com/latest/winx64"
-          $braveInstaller = "$env:TEMP\brave_installer.exe"
+          $braveUrl = "${{ matrix.brave_url }}"
+          $braveInstaller = "$env:TEMP\brave_installer_${{ matrix.arch }}.exe"
           
-          Write-Host "Downloading Brave..." -ForegroundColor Yellow
+          Write-Host "Downloading Brave (${{ matrix.arch }})..." -ForegroundColor Yellow
           (New-Object System.Net.WebClient).DownloadFile($braveUrl, $braveInstaller)
           
-          Write-Host "Installing Brave..." -ForegroundColor Yellow
+          Write-Host "Installing Brave (${{ matrix.arch }})..." -ForegroundColor Yellow
           Start-Process -FilePath $braveInstaller -ArgumentList "/silent /install" -Wait
         } catch {
           Write-Error "Failed to download/install Brave: $($_.Exception.Message)"
@@ -37,10 +50,10 @@ jobs:
       shell: powershell
       run: |
         try {
-          $bravePath = "C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe"
+          $bravePath = "${{ matrix.app_path }}\brave.exe"
           
           if (-not (Test-Path $bravePath)) {
-            Write-Error "Brave not found at expected location"
+            Write-Error "Brave not found at expected location: $bravePath"
             exit 1
           }
           
@@ -49,7 +62,7 @@ jobs:
           Write-Host "Brave version: $braveVersion"
           
           # Remove unnecessary directories
-          $applicationDir = "C:\Program Files\BraveSoftware\Brave-Browser\Application"
+          $applicationDir = "${{ matrix.app_path }}"
           $versionDir = "$applicationDir\$braveVersion"
           
           # Remove installer directory
@@ -94,7 +107,7 @@ jobs:
       id: check-release
       shell: powershell
       run: |
-        $releaseTag = "brave-portable-x64_${{ steps.brave-version.outputs.BRAVE_VERSION }}_${{ steps.chromeplus-version.outputs.CHROMEPLUS_VERSION }}"
+        $releaseTag = "brave-portable-${{ matrix.arch }}_${{ steps.brave-version.outputs.BRAVE_VERSION }}_${{ steps.chromeplus-version.outputs.CHROMEPLUS_VERSION }}"
         echo "RELEASE_TAG=$releaseTag" >> $env:GITHUB_OUTPUT
         
         try {
@@ -122,13 +135,13 @@ jobs:
         # Stop any Brave processes
         Stop-Process -Name brave -Force -ErrorAction SilentlyContinue
         
-        Write-Host "Building Brave Portable with Chrome++" -ForegroundColor Green
+        Write-Host "Building Brave Portable ${{ matrix.arch }} with Chrome++" -ForegroundColor Green
         
         $releaseTag = "${{ steps.check-release.outputs.RELEASE_TAG }}"
-        $rootPath = "$env:GITHUB_WORKSPACE\Brave_Portable"
+        $rootPath = "$env:GITHUB_WORKSPACE\Brave_Portable_${{ matrix.arch }}"
         $portablePath = "$rootPath\Brave"
-        $tempDir = "$env:TEMP\BraveBuilder"
-        $applicationPath = "C:\Program Files\BraveSoftware\Brave-Browser\Application"
+        $tempDir = "$env:TEMP\BraveBuilder_${{ matrix.arch }}"
+        $applicationPath = "${{ matrix.app_path }}"
         $braveVersion = "${{ steps.brave-version.outputs.BRAVE_VERSION }}"
         
         # Get Chrome++ release info
@@ -161,13 +174,13 @@ jobs:
         
         # Copy Chrome++ files to Application
         Write-Host "Installing Chrome++..." -ForegroundColor Yellow
-        Copy-Item "$chromePlusExtractDir\setdll-x64.exe" "$applicationPath\setdll-x64.exe" -Force
-        Copy-Item "$chromePlusExtractDir\version-x64.dll" "$applicationPath\version.dll" -Force
+        Copy-Item "$chromePlusExtractDir\${{ matrix.setdll_exe }}" "$applicationPath\setdll-local.exe" -Force
+        Copy-Item "$chromePlusExtractDir\${{ matrix.version_dll }}" "$applicationPath\version.dll" -Force
         
         # Apply Chrome++ to the original brave.exe (keeping original name)
         Write-Host "Applying Chrome++ to brave.exe..." -ForegroundColor Yellow
         Push-Location $applicationPath
-        & ".\setdll-x64.exe" /d:version.dll brave.exe | Out-Null
+        & ".\setdll-local.exe" /d:version.dll brave.exe | Out-Null
         Pop-Location
         
         # Copy Brave files to portable directory
@@ -176,8 +189,8 @@ jobs:
         
         # Cleanup temp files and Chrome++ installer files
         Remove-Item $tempDir -Recurse -Force
-        Remove-Item "$applicationPath\setdll-x64.exe", "$applicationPath\brave.exe~" -Force -ErrorAction SilentlyContinue
-        Remove-Item "$portablePath\setdll-x64.exe", "$portablePath\brave.exe~" -Force -ErrorAction SilentlyContinue
+        Remove-Item "$applicationPath\setdll-local.exe", "$applicationPath\brave.exe~" -Force -ErrorAction SilentlyContinue
+        Remove-Item "$portablePath\setdll-local.exe", "$portablePath\brave.exe~" -Force -ErrorAction SilentlyContinue
         
         Write-Host "Build completed!" -ForegroundColor Green
         
@@ -187,7 +200,7 @@ jobs:
       run: |
         $releaseTag = "${{ steps.check-release.outputs.RELEASE_TAG }}"
         $zipPath = "$env:GITHUB_WORKSPACE\$releaseTag.zip"
-        $sourcePath = "$env:GITHUB_WORKSPACE\Brave_Portable"
+        $sourcePath = "$env:GITHUB_WORKSPACE\Brave_Portable_${{ matrix.arch }}"
         
         Compress-Archive -Path $sourcePath -DestinationPath $zipPath -CompressionLevel Optimal
         Write-Host "Created archive: $zipPath"
@@ -208,7 +221,7 @@ jobs:
         $archivePath = "${{ steps.create-archive.outputs.ARCHIVE_PATH }}"
         
         # Create release body
-        $releaseBody = "**Brave Portable with Chrome++ Auto Build**`n`n**Brave Version:** $braveVersion`n**Chrome++ Version:** $chromePlusVersion`n`n## What's Included`n- Brave Browser Portable`n- Chrome++ enhancements`n- Debloated configuration (Brave Shields, Rewards, Wallet, VPN, etc. disabled)`n- Pre-configured settings for privacy and performance`n`n## Installation`n1. Download the ZIP file`n2. Extract to your desired location`n3. Run Brave_Portable\Brave\brave.exe`n`n## Update`n1. Run Brave_Portable\Brave\update.bat`n2. Your settings and chrome++.ini configuration will be preserved`n`n## Features`n- Fully portable - no installation required`n- Enhanced with Chrome++ features`n- Auto-configured for optimal privacy experience`n- Brave features disabled via registry settings`n- Custom extension management`n`n---`n*This release was automatically generated by GitHub Actions*"
+        $releaseBody = "**Brave Portable with Chrome++ Auto Build**`n`n**Architecture:** ${{ matrix.arch }}`n**Brave Version:** $braveVersion`n**Chrome++ Version:** $chromePlusVersion`n`n## What's Included`n- Brave Browser Portable (${{ matrix.arch }})`n- Chrome++ enhancements`n- Debloated configuration (Brave Shields, Rewards, Wallet, VPN, etc. disabled)`n- Pre-configured settings for privacy and performance`n`n## Installation`n1. Download the ZIP file`n2. Extract to your desired location`n3. Run Brave_Portable_${{ matrix.arch }}\Brave\brave.exe`n`n## Update`n1. Run Brave_Portable_${{ matrix.arch }}\Brave\update.bat`n2. Your settings and chrome++.ini configuration will be preserved`n`n## Features`n- Fully portable - no installation required`n- Enhanced with Chrome++ features`n- Auto-configured for optimal privacy experience`n- Brave features disabled via registry settings`n- Custom extension management`n`n---`n*This release was automatically generated by GitHub Actions*"
         
         Write-Host "Creating release: $releaseTag" -ForegroundColor Yellow
         $releaseTitle = "$releaseTag"
