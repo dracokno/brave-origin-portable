@@ -14,88 +14,66 @@ jobs:
       matrix:
         include:
           - arch: x64
-            brave_url: 'https://laptop-updates.brave.com/latest/winx64'
             setdll_exe: 'setdll-x64.exe'
             version_dll: 'version-x64.dll'
           - arch: x86
-            brave_url: 'https://laptop-updates.brave.com/latest/winia32'
             setdll_exe: 'setdll-x86.exe'
             version_dll: 'version-x86.dll'
-    
+            
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
       
-    - name: Download and Install Brave
-      id: brave-install
-      shell: powershell
-      run: |
-        try {
-          $braveUrl = "${{ matrix.brave_url }}"
-          $braveInstaller = "$env:TEMP\brave_installer_${{ matrix.arch }}.exe"
-          
-          Write-Host "Downloading Brave (${{ matrix.arch }})..." -ForegroundColor Yellow
-          (New-Object System.Net.WebClient).DownloadFile($braveUrl, $braveInstaller)
-          
-          Write-Host "Installing Brave (${{ matrix.arch }})..." -ForegroundColor Yellow
-          Start-Process -FilePath $braveInstaller -ArgumentList "/silent /install" -Wait
-        } catch {
-          Write-Error "Failed to download/install Brave: $($_.Exception.Message)"
-          exit 1
-        }
-        
-    - name: Get Brave version
+    - name: Download and Extract Brave from GitHub Releases
       id: brave-version
       shell: powershell
       run: |
         try {
-          $candidatePaths = @(
-            "C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe",
-            "C:\Program Files (x86)\BraveSoftware\Brave-Browser\Application\brave.exe"
-          )
+          $headers = @{ 'Authorization' = 'token ${{ secrets.GITHUB_TOKEN }}' }
+          Write-Host "Fetching latest Brave Release metadata..." -ForegroundColor Yellow
+          $braveRelease = Invoke-RestMethod "https://api.github.com/repos/brave/brave-browser/releases/latest" -Headers $headers
           
-          $bravePath = $null
-          foreach ($path in $candidatePaths) {
-            if (Test-Path $path) {
-              $bravePath = $path
-              break
-            }
+          $pattern = if ("${{ matrix.arch }}" -eq "x64") { "^brave-v[0-9.]+-win32-x64\.zip$" } else { "^brave-v[0-9.]+-win32-ia32\.zip$" }
+          $braveAsset = $braveRelease.assets | Where-Object { $_.name -match $pattern } | Select-Object -First 1
+          
+          if ($null -eq $braveAsset) {
+            throw "Could not find a valid zip archive asset matching architecture pattern '$pattern' in latest release."
           }
           
-          if ($null -eq $bravePath) {
-            Write-Error "Brave executable could not be found in standard Program Files directories."
-            exit 1
+          $zipPath = "$env:TEMP\brave_${{ matrix.arch }}.zip"
+          Write-Host "Downloading $($braveAsset.name)..." -ForegroundColor Yellow
+          Invoke-WebRequest -Uri $braveAsset.browser_download_url -OutFile $zipPath
+          
+          $extractPath = "$env:GITHUB_WORKSPACE\Brave_Raw_Extract"
+          if (Test-Path $extractPath) { Remove-Item $extractPath -Recurse -Force }
+          New-Item -ItemType Directory -Path $extractPath -Force | Out-Null
+          
+          Write-Host "Extracting archive to local workspace..." -ForegroundColor Yellow
+          Expand-Archive -Path $zipPath -DestinationPath $extractPath -Force
+          
+          $braveExePath = Get-ChildItem -Path $extractPath -Filter "brave.exe" -Recurse | Select-Object -First 1 -ExpandProperty FullName
+          if ($null -eq $braveExePath) {
+            throw "Extraction completed, but failed to yield a valid brave.exe binary target."
           }
           
-          $applicationDir = Split-Path $bravePath
-          $braveVersion = (Get-Item $bravePath).VersionInfo.ProductVersion
+          $applicationDir = Split-Path $braveExePath
+          $braveVersion = (Get-Item $braveExePath).VersionInfo.ProductVersion
           
           echo "BRAVE_VERSION=$braveVersion" >> $env:GITHUB_OUTPUT
           echo "APP_PATH=$applicationDir" >> $env:GITHUB_OUTPUT
           
-          Write-Host "Brave version found: $braveVersion"
-          Write-Host "Brave directory resolved: $applicationDir"
-          
           $versionDir = "$applicationDir\$braveVersion"
-          $installerPath = "$versionDir\Installer"
-          if (Test-Path $installerPath) {
-            Remove-Item $installerPath -Recurse -Force
-            Write-Host "Removed Installer directory"
-          }
-          
           $extensionsPath = "$versionDir\default_apps"
           if (Test-Path $extensionsPath) {
-            $itemsToRemove = Get-ChildItem $extensionsPath -Directory | Where-Object {
+            Get-ChildItem $extensionsPath -Directory | Where-Object {
               $_.Name -match "(brave|rewards|wallet|vpn|talk|news|playlist|search|leo|dashboard|sidebar)"
-            }
-            foreach ($item in $itemsToRemove) {
-              Remove-Item $item.FullName -Recurse -Force -ErrorAction SilentlyContinue
-              Write-Host "Removed extension: $($item.Name)"
+            } | ForEach-Object {
+              Remove-Item $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
+              Write-Host "Removed extension component: $($_.Name)"
             }
           }
-          
         } catch {
-          Write-Error "Failed to get Brave version: $($_.Exception.Message)"
+          Write-Error "Failed to fetch or extract portable Brave source: $($_.Exception.Message)"
           exit 1
         }
         
@@ -104,7 +82,8 @@ jobs:
       shell: powershell
       run: |
         try {
-          $chromePlusRelease = Invoke-RestMethod "https://api.github.com/repos/Bush2021/chrome_plus/releases/latest"
+          $headers = @{ 'Authorization' = 'token ${{ secrets.GITHUB_TOKEN }}' }
+          $chromePlusRelease = Invoke-RestMethod "https://api.github.com/repos/Bush2021/chrome_plus/releases/latest" -Headers $headers
           $chromePlusVersion = $chromePlusRelease.tag_name
           echo "CHROMEPLUS_VERSION=$chromePlusVersion" >> $env:GITHUB_OUTPUT
           Write-Host "Chrome++ version: $chromePlusVersion"
@@ -142,28 +121,24 @@ jobs:
       if: steps.check-release.outputs.RELEASE_EXISTS == 'false'
       shell: powershell
       run: |
-        Stop-Process -Name brave -Force -ErrorAction SilentlyContinue
-        
         Write-Host "Building Brave Portable ${{ matrix.arch }} with Chrome++" -ForegroundColor Green
         
-        $releaseTag = "${{ steps.check-release.outputs.RELEASE_TAG }}"
         $rootPath = "$env:GITHUB_WORKSPACE\Brave_Portable_${{ matrix.arch }}"
         $portablePath = "$rootPath\Brave"
         $tempDir = "$env:TEMP\BraveBuilder_${{ matrix.arch }}"
         $applicationPath = "${{ steps.brave-version.outputs.APP_PATH }}"
-        $braveVersion = "${{ steps.brave-version.outputs.BRAVE_VERSION }}"
-        
-        $chromePlusRelease = Invoke-RestMethod "https://api.github.com/repos/Bush2021/chrome_plus/releases/latest"
-        $chromePlusDownloadUrl = $chromePlusRelease.assets | Where-Object { $_.name -eq "setdll.7z" } | Select-Object -First 1 -ExpandProperty browser_download_url
         
         if (Test-Path $tempDir) { Remove-Item $tempDir -Recurse -Force }
         New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
         if (Test-Path $rootPath) { Remove-Item $rootPath -Recurse -Force }
         New-Item -ItemType Directory -Path $rootPath -Force | Out-Null
-        New-Item -ItemType Directory -Path $portablePath -Force | Out-Null
         
-        (New-Object System.Net.WebClient).DownloadFile($chromePlusDownloadUrl, "$tempDir\setdll.7z")
-        (New-Object System.Net.WebClient).DownloadFile("https://www.7-zip.org/a/7zr.exe", "$tempDir\7zr.exe")
+        $headers = @{ 'Authorization' = 'token ${{ secrets.GITHUB_TOKEN }}' }
+        $chromePlusRelease = Invoke-RestMethod "https://api.github.com/repos/Bush2021/chrome_plus/releases/latest" -Headers $headers
+        $chromePlusDownloadUrl = $chromePlusRelease.assets | Where-Object { $_.name -eq "setdll.7z" } | Select-Object -First 1 -ExpandProperty browser_download_url
+        
+        Invoke-WebRequest -Uri $chromePlusDownloadUrl -OutFile "$tempDir\setdll.7z"
+        Invoke-WebRequest -Uri "https://www.7-zip.org/a/7zr.exe" -OutFile "$tempDir\7zr.exe"
         
         Copy-Item "$env:GITHUB_WORKSPACE\chrome++.ini" "$applicationPath\chrome++.ini" -Force
         Copy-Item "$env:GITHUB_WORKSPACE\update.bat" "$applicationPath\update.bat" -Force
@@ -177,19 +152,25 @@ jobs:
         Copy-Item "$chromePlusExtractDir\${{ matrix.version_dll }}" "$applicationPath\version.dll" -Force
         
         Push-Location $applicationPath
-        & ".\setdll-local.exe" /d:version.dll brave.exe | Out-Null
+        & ".\setdll-local.exe" /d:version.dll brave.exe
+        if ($LASTEXITCODE -ne 0) {
+            Write-Error "setdll failed to binary-patch brave.exe with exit code $LASTEXITCODE."
+            Pop-Location
+            if (Test-Path "$applicationPath\brave.exe#") { Remove-Item "$applicationPath\brave.exe#" -Force }
+            exit 1
+        }
         Pop-Location
         
-        Copy-Item "$applicationPath\*" $portablePath -Recurse -Force
+        Move-Item $applicationPath $portablePath -Force
         
         Remove-Item $tempDir -Recurse -Force
-        Remove-Item "$applicationPath\setdll-local.exe", "$applicationPath\brave.exe~" -Force -ErrorAction SilentlyContinue
         Remove-Item "$portablePath\setdll-local.exe", "$portablePath\brave.exe~" -Force -ErrorAction SilentlyContinue
         
         Write-Host "Build completed!" -ForegroundColor Green
         
     - name: Create ZIP archive
       if: steps.check-release.outputs.RELEASE_EXISTS == 'false'
+      id: create-archive
       shell: powershell
       run: |
         $releaseTag = "${{ steps.check-release.outputs.RELEASE_TAG }}"
@@ -199,7 +180,6 @@ jobs:
         Compress-Archive -Path $sourcePath -DestinationPath $zipPath -CompressionLevel Optimal
         Write-Host "Created archive: $zipPath"
         echo "ARCHIVE_PATH=$zipPath" >> $env:GITHUB_OUTPUT
-      id: create-archive
         
     - name: Create Release and Upload Asset
       if: steps.check-release.outputs.RELEASE_EXISTS == 'false'
