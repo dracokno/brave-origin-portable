@@ -78,12 +78,10 @@ jobs:
         try {
           $rootPath = "$env:GITHUB_WORKSPACE\Brave_Portable_${{ matrix.arch }}"
           $portablePath = "$rootPath\Brave"
-          $tempExtractPath = "$env:GITHUB_WORKSPACE\Brave_Temp_Extract"
           $setdllExtract = "$env:TEMP\setdll_out"
           
           if (Test-Path $rootPath) { Remove-Item $rootPath -Recurse -Force }
-          if (Test-Path $tempExtractPath) { Remove-Item $tempExtractPath -Recurse -Force }
-          New-Item -ItemType Directory -Path $rootPath -Force | Out-Null
+          New-Item -ItemType Directory -Path $portablePath -Force | Out-Null
           
           $pattern = if ("${{ matrix.arch }}" -eq "x64") { "brave-v*-win32-x64.zip" } else { "brave-v*-win32-ia32.zip" }
           gh release download --repo brave/brave-browser --pattern $pattern --dir "$env:TEMP"
@@ -92,10 +90,7 @@ jobs:
           $zipFile = Get-ChildItem "$env:TEMP" -Filter $pattern | Select-Object -First 1
           if ($null -eq $zipFile) { throw "Zip file not found" }
           
-          & 7z x $zipFile.FullName "-o$tempExtractPath" -y | Out-Null
-          $extractedFolder = Get-ChildItem $tempExtractPath -Directory | Select-Object -First 1
-          Move-Item $extractedFolder.FullName $portablePath
-          
+          & 7z x $zipFile.FullName "-o$portablePath" -y | Out-Null
           & 7z x "$env:TEMP\setdll.7z" "-o$setdllExtract" -y | Out-Null
           
           $braveExePath = Get-ChildItem -Path $portablePath -Filter "brave.exe" -Recurse | Select-Object -First 1 -ExpandProperty FullName
@@ -129,7 +124,6 @@ jobs:
           }
           Pop-Location
           
-          Remove-Item $tempExtractPath -Recurse -Force -ErrorAction SilentlyContinue
           Remove-Item $setdllExtract -Recurse -Force -ErrorAction SilentlyContinue
           Remove-Item $zipFile.FullName -Force -ErrorAction SilentlyContinue
           Remove-Item "$env:TEMP\setdll.7z" -Force -ErrorAction SilentlyContinue
