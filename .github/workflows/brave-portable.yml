@@ -161,7 +161,7 @@ jobs:
         }
         Pop-Location
         
-        Move-Item $applicationPath $portablePath -Force
+        Copy-Item $applicationPath $portablePath -Recurse -Force
         
         Remove-Item $tempDir -Recurse -Force
         Remove-Item "$portablePath\setdll-local.exe", "$portablePath\brave.exe~" -Force -ErrorAction SilentlyContinue
