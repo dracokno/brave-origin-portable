@@ -23,63 +23,24 @@ jobs:
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
-      
-    - name: Download and Extract Brave
-      id: brave-version
+
+    - name: Get latest versions
+      id: versions
       shell: powershell
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
         try {
-          $pattern = if ("${{ matrix.arch }}" -eq "x64") { "brave-v*-win32-x64.zip" } else { "brave-v*-win32-ia32.zip" }
-          gh release download --repo brave/brave-browser --pattern $pattern --dir "$env:TEMP"
+          $braveTag = gh release view --repo brave/brave-browser --json tagName --jq .tagName
+          $braveVersion = $braveTag -replace '^v', ''
+          $chromePlusVersion = gh release view --repo Bush2021/chrome_plus --json tagName --jq .tagName
           
-          $zipFile = Get-ChildItem "$env:TEMP" -Filter $pattern | Select-Object -First 1
-          if ($null -eq $zipFile) { throw "Zip file not found" }
-          $zipPath = $zipFile.FullName
-          
-          $extractPath = "$env:GITHUB_WORKSPACE\Brave_Raw_Extract"
-          if (Test-Path $extractPath) { Remove-Item $extractPath -Recurse -Force }
-          New-Item -ItemType Directory -Path $extractPath -Force | Out-Null
-          
-          & 7z x $zipPath "-o$extractPath" -y | Out-Null
-          
-          $braveExePath = Get-ChildItem -Path $extractPath -Filter "brave.exe" -Recurse | Select-Object -First 1 -ExpandProperty FullName
-          if ($null -eq $braveExePath) { throw "brave.exe not found" }
-          
-          $applicationDir = Split-Path $braveExePath
-          $braveVersion = (Get-Item $braveExePath).VersionInfo.ProductVersion
+          if (-not $braveVersion -or -not $chromePlusVersion) { throw "Failed to fetch versions" }
           
           echo "BRAVE_VERSION=$braveVersion" >> $env:GITHUB_OUTPUT
-          echo "APP_PATH=$applicationDir" >> $env:GITHUB_OUTPUT
-          
-          $versionDir = "$applicationDir\$braveVersion"
-          $extensionsPath = "$versionDir\default_apps"
-          if (Test-Path $extensionsPath) {
-            Get-ChildItem $extensionsPath -Directory | Where-Object {
-              $_.Name -match "(brave|rewards|wallet|vpn|talk|news|playlist|search|leo|dashboard|sidebar)"
-            } | ForEach-Object {
-              Remove-Item $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
-            }
-          }
-          Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
+          echo "CHROMEPLUS_VERSION=$chromePlusVersion" >> $env:GITHUB_OUTPUT
         } catch {
           Write-Error $_.Exception.Message
-          exit 1
-        }
-        
-    - name: Get latest Chrome++ version
-      id: chromeplus-version
-      shell: powershell
-      run: |
-        try {
-          $headers = @{ 'Authorization' = 'token ${{ secrets.GITHUB_TOKEN }}' }
-          $chromePlusRelease = Invoke-RestMethod "https://api.github.com/repos/Bush2021/chrome_plus/releases/latest" -Headers $headers
-          $chromePlusVersion = $chromePlusRelease.tag_name
-          echo "CHROMEPLUS_VERSION=$chromePlusVersion" >> $env:GITHUB_OUTPUT
-          Write-Host "Chrome++ version: $chromePlusVersion"
-        } catch {
-          Write-Error "Failed to get Chrome++ version: $($_.Exception.Message)"
           exit 1
         }
         
@@ -87,7 +48,7 @@ jobs:
       id: check-release
       shell: powershell
       run: |
-        $releaseTag = "brave-portable-${{ matrix.arch }}_${{ steps.brave-version.outputs.BRAVE_VERSION }}_${{ steps.chromeplus-version.outputs.CHROMEPLUS_VERSION }}"
+        $releaseTag = "brave-portable-${{ matrix.arch }}_${{ steps.versions.outputs.BRAVE_VERSION }}_${{ steps.versions.outputs.CHROMEPLUS_VERSION }}"
         echo "RELEASE_TAG=$releaseTag" >> $env:GITHUB_OUTPUT
         
         try {
@@ -107,57 +68,76 @@ jobs:
             exit 1
           }
         }
-        
-    - name: Build Brave Portable
+
+    - name: Build Portable
       if: steps.check-release.outputs.RELEASE_EXISTS == 'false'
       shell: powershell
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
-        Write-Host "Building Brave Portable ${{ matrix.arch }} with Chrome++" -ForegroundColor Green
-        
-        $rootPath = "$env:GITHUB_WORKSPACE\Brave_Portable_${{ matrix.arch }}"
-        $portablePath = "$rootPath\Brave"
-        $tempDir = "$env:TEMP\BraveBuilder_${{ matrix.arch }}"
-        $applicationPath = "${{ steps.brave-version.outputs.APP_PATH }}"
-        
-        if (Test-Path $tempDir) { Remove-Item $tempDir -Recurse -Force }
-        New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
-        if (Test-Path $rootPath) { Remove-Item $rootPath -Recurse -Force }
-        New-Item -ItemType Directory -Path $rootPath -Force | Out-Null
-        
-        $headers = @{ 'Authorization' = 'token ${{ secrets.GITHUB_TOKEN }}' }
-        $chromePlusRelease = Invoke-RestMethod "https://api.github.com/repos/Bush2021/chrome_plus/releases/latest" -Headers $headers
-        $chromePlusDownloadUrl = $chromePlusRelease.assets | Where-Object { $_.name -eq "setdll.7z" } | Select-Object -First 1 -ExpandProperty browser_download_url
-        
-        Invoke-WebRequest -Uri $chromePlusDownloadUrl -OutFile "$tempDir\setdll.7z"
-        Invoke-WebRequest -Uri "https://www.7-zip.org/a/7zr.exe" -OutFile "$tempDir\7zr.exe"
-        
-        Copy-Item "$env:GITHUB_WORKSPACE\chrome++.ini" "$applicationPath\chrome++.ini" -Force
-        Copy-Item "$env:GITHUB_WORKSPACE\update.bat" "$applicationPath\update.bat" -Force
-        Copy-Item "$env:GITHUB_WORKSPACE\debloat.reg" "$applicationPath\debloat.reg" -Force
-        
-        $sevenZPath = "$tempDir\7zr.exe"
-        $chromePlusExtractDir = "$tempDir\chromeplus"
-        & $sevenZPath x "$tempDir\setdll.7z" "-o$chromePlusExtractDir" -y | Out-Null
-        
-        Copy-Item "$chromePlusExtractDir\${{ matrix.setdll_exe }}" "$applicationPath\setdll-local.exe" -Force
-        Copy-Item "$chromePlusExtractDir\${{ matrix.version_dll }}" "$applicationPath\version.dll" -Force
-        
-        Push-Location $applicationPath
-        & ".\setdll-local.exe" /d:version.dll brave.exe
-        if ($LASTEXITCODE -ne 0) {
-            Write-Error "setdll failed to binary-patch brave.exe with exit code $LASTEXITCODE."
-            Pop-Location
-            if (Test-Path "$applicationPath\brave.exe#") { Remove-Item "$applicationPath\brave.exe#" -Force }
-            exit 1
+        try {
+          $rootPath = "$env:GITHUB_WORKSPACE\Brave_Portable_${{ matrix.arch }}"
+          $portablePath = "$rootPath\Brave"
+          $tempExtractPath = "$env:GITHUB_WORKSPACE\Brave_Temp_Extract"
+          $setdllExtract = "$env:TEMP\setdll_out"
+          
+          if (Test-Path $rootPath) { Remove-Item $rootPath -Recurse -Force }
+          if (Test-Path $tempExtractPath) { Remove-Item $tempExtractPath -Recurse -Force }
+          New-Item -ItemType Directory -Path $rootPath -Force | Out-Null
+          
+          $pattern = if ("${{ matrix.arch }}" -eq "x64") { "brave-v*-win32-x64.zip" } else { "brave-v*-win32-ia32.zip" }
+          gh release download --repo brave/brave-browser --pattern $pattern --dir "$env:TEMP"
+          gh release download --repo Bush2021/chrome_plus --pattern "setdll.7z" --dir "$env:TEMP"
+          
+          $zipFile = Get-ChildItem "$env:TEMP" -Filter $pattern | Select-Object -First 1
+          if ($null -eq $zipFile) { throw "Zip file not found" }
+          
+          & 7z x $zipFile.FullName "-o$tempExtractPath" -y | Out-Null
+          $extractedFolder = Get-ChildItem $tempExtractPath -Directory | Select-Object -First 1
+          Move-Item $extractedFolder.FullName $portablePath
+          
+          & 7z x "$env:TEMP\setdll.7z" "-o$setdllExtract" -y | Out-Null
+          
+          $braveExePath = Get-ChildItem -Path $portablePath -Filter "brave.exe" -Recurse | Select-Object -First 1 -ExpandProperty FullName
+          if ($null -eq $braveExePath) { throw "brave.exe not found" }
+          $applicationPath = Split-Path $braveExePath
+          
+          Copy-Item "$env:GITHUB_WORKSPACE\chrome++.ini" "$applicationPath\chrome++.ini" -Force
+          Copy-Item "$env:GITHUB_WORKSPACE\update.bat" "$applicationPath\update.bat" -Force
+          Copy-Item "$env:GITHUB_WORKSPACE\debloat.reg" "$applicationPath\debloat.reg" -Force
+          Copy-Item "$setdllExtract\${{ matrix.setdll_exe }}" "$applicationPath\setdll-local.exe" -Force
+          Copy-Item "$setdllExtract\${{ matrix.version_dll }}" "$applicationPath\version.dll" -Force
+          
+          $braveVersion = "${{ steps.versions.outputs.BRAVE_VERSION }}"
+          $versionDir = "$applicationPath\$braveVersion"
+          $extensionsPath = "$versionDir\default_apps"
+          if (Test-Path $extensionsPath) {
+            Get-ChildItem $extensionsPath -Directory | Where-Object {
+              $_.Name -match "(brave|rewards|wallet|vpn|talk|news|playlist|search|leo|dashboard|sidebar)"
+            } | ForEach-Object {
+              Remove-Item $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
+            }
+          }
+          
+          Push-Location $applicationPath
+          & ".\setdll-local.exe" /d:version.dll brave.exe
+          if ($LASTEXITCODE -ne 0) {
+              Write-Error "setdll failed"
+              Pop-Location
+              if (Test-Path "$applicationPath\brave.exe#") { Remove-Item "$applicationPath\brave.exe#" -Force }
+              exit 1
+          }
+          Pop-Location
+          
+          Remove-Item $tempExtractPath -Recurse -Force -ErrorAction SilentlyContinue
+          Remove-Item $setdllExtract -Recurse -Force -ErrorAction SilentlyContinue
+          Remove-Item $zipFile.FullName -Force -ErrorAction SilentlyContinue
+          Remove-Item "$env:TEMP\setdll.7z" -Force -ErrorAction SilentlyContinue
+          Remove-Item "$applicationPath\setdll-local.exe", "$applicationPath\brave.exe~" -Force -ErrorAction SilentlyContinue
+        } catch {
+          Write-Error $_.Exception.Message
+          exit 1
         }
-        Pop-Location
-        
-        Copy-Item $applicationPath $portablePath -Recurse -Force
-        
-        Remove-Item $tempDir -Recurse -Force
-        Remove-Item "$portablePath\setdll-local.exe", "$portablePath\brave.exe~" -Force -ErrorAction SilentlyContinue
-        
-        Write-Host "Build completed!" -ForegroundColor Green
         
     - name: Create ZIP archive
       if: steps.check-release.outputs.RELEASE_EXISTS == 'false'
@@ -179,8 +159,8 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
         $releaseTag = "${{ steps.check-release.outputs.RELEASE_TAG }}"
-        $braveVersion = "${{ steps.brave-version.outputs.BRAVE_VERSION }}"
-        $chromePlusVersion = "${{ steps.chromeplus-version.outputs.CHROMEPLUS_VERSION }}"
+        $braveVersion = "${{ steps.versions.outputs.BRAVE_VERSION }}"
+        $chromePlusVersion = "${{ steps.versions.outputs.CHROMEPLUS_VERSION }}"
         $archivePath = "${{ steps.create-archive.outputs.ARCHIVE_PATH }}"
         
         $releaseBody = "**Brave Portable with Chrome++ Auto Build**`n`n**Architecture:** ${{ matrix.arch }}`n**Brave Version:** $braveVersion`n**Chrome++ Version:** $chromePlusVersion`n`n## What's Included`n- Brave Browser Portable (${{ matrix.arch }})`n- Chrome++ enhancements`n- Debloated configuration`n`n## Installation`n1. Download the ZIP file`n2. Extract`n3. Run Brave_Portable_${{ matrix.arch }}\Brave\brave.exe`n`n---`n*This release was automatically generated by GitHub Actions*"
