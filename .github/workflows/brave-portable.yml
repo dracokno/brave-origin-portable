@@ -24,37 +24,28 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
       
-    - name: Download and Extract Brave from GitHub Releases
+    - name: Download and Extract Brave
       id: brave-version
       shell: powershell
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
         try {
-          $headers = @{ 'Authorization' = 'token ${{ secrets.GITHUB_TOKEN }}' }
-          Write-Host "Fetching latest Brave Release metadata..." -ForegroundColor Yellow
-          $braveRelease = Invoke-RestMethod "https://api.github.com/repos/brave/brave-browser/releases/latest" -Headers $headers
+          $pattern = if ("${{ matrix.arch }}" -eq "x64") { "brave-v*-win32-x64.zip" } else { "brave-v*-win32-ia32.zip" }
+          gh release download --repo brave/brave-browser --pattern $pattern --dir "$env:TEMP"
           
-          $pattern = if ("${{ matrix.arch }}" -eq "x64") { "^brave-v[0-9.]+-win32-x64\.zip$" } else { "^brave-v[0-9.]+-win32-ia32\.zip$" }
-          $braveAsset = $braveRelease.assets | Where-Object { $_.name -match $pattern } | Select-Object -First 1
-          
-          if ($null -eq $braveAsset) {
-            throw "Could not find a valid zip archive asset matching architecture pattern '$pattern' in latest release."
-          }
-          
-          $zipPath = "$env:TEMP\brave_${{ matrix.arch }}.zip"
-          Write-Host "Downloading $($braveAsset.name)..." -ForegroundColor Yellow
-          Invoke-WebRequest -Uri $braveAsset.browser_download_url -OutFile $zipPath
+          $zipFile = Get-ChildItem "$env:TEMP" -Filter $pattern | Select-Object -First 1
+          if ($null -eq $zipFile) { throw "Zip file not found" }
+          $zipPath = $zipFile.FullName
           
           $extractPath = "$env:GITHUB_WORKSPACE\Brave_Raw_Extract"
           if (Test-Path $extractPath) { Remove-Item $extractPath -Recurse -Force }
           New-Item -ItemType Directory -Path $extractPath -Force | Out-Null
           
-          Write-Host "Extracting archive to local workspace..." -ForegroundColor Yellow
-          Expand-Archive -Path $zipPath -DestinationPath $extractPath -Force
+          & 7z x $zipPath "-o$extractPath" -y | Out-Null
           
           $braveExePath = Get-ChildItem -Path $extractPath -Filter "brave.exe" -Recurse | Select-Object -First 1 -ExpandProperty FullName
-          if ($null -eq $braveExePath) {
-            throw "Extraction completed, but failed to yield a valid brave.exe binary target."
-          }
+          if ($null -eq $braveExePath) { throw "brave.exe not found" }
           
           $applicationDir = Split-Path $braveExePath
           $braveVersion = (Get-Item $braveExePath).VersionInfo.ProductVersion
@@ -69,11 +60,11 @@ jobs:
               $_.Name -match "(brave|rewards|wallet|vpn|talk|news|playlist|search|leo|dashboard|sidebar)"
             } | ForEach-Object {
               Remove-Item $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
-              Write-Host "Removed extension component: $($_.Name)"
             }
           }
+          Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
         } catch {
-          Write-Error "Failed to fetch or extract portable Brave source: $($_.Exception.Message)"
+          Write-Error $_.Exception.Message
           exit 1
         }
         
