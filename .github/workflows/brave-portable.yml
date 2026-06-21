@@ -123,7 +123,7 @@ jobs:
               exit 1
           }
           Pop-Location
-          Start-Sleep -Seconds 1
+          Start-Sleep -Seconds 5
           
           Remove-Item $setdllExtract -Recurse -Force -ErrorAction SilentlyContinue
           Remove-Item $zipFile.FullName -Force -ErrorAction SilentlyContinue
