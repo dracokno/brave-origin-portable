@@ -47,7 +47,7 @@ jobs:
       id: check-release
       shell: powershell
       run: |
-        $releaseTag = "brave-portable-${{ matrix.arch }}_${{ steps.versions.outputs.BRAVE_VERSION }}"
+        $releaseTag = "brave-origin-portable-${{ matrix.arch }}_${{ steps.versions.outputs.BRAVE_VERSION }}"
         echo "RELEASE_TAG=$releaseTag" >> $env:GITHUB_OUTPUT
         try {
           $headers = @{
@@ -84,7 +84,7 @@ jobs:
         }
 
         try {
-          $rootPath = "$env:GITHUB_WORKSPACE\Brave_Portable_${{ matrix.arch }}"
+          $rootPath = "$env:GITHUB_WORKSPACE\Brave_Origin_Portable_${{ matrix.arch }}"
           $portablePath = "$rootPath\Brave"
           $liteExtract = "$env:TEMP\chrome_plus_lite_out"
           $setdllExtract = "$env:TEMP\setdll_out"
@@ -92,7 +92,7 @@ jobs:
           if (Test-Path $rootPath) { Remove-Item $rootPath -Recurse -Force }
           New-Item -ItemType Directory -Path $portablePath -Force | Out-Null
           
-          $pattern = if ("${{ matrix.arch }}" -eq "x64") { "brave-v*-win32-x64.zip" } else { "brave-v*-win32-ia32.zip" }
+          $pattern = if ("${{ matrix.arch }}" -eq "x64") { "brave-origin*-win32-x64.zip" } else { "brave-origin*-win32-ia32.zip" }
           
           gh release download --repo brave/brave-browser --pattern $pattern --dir "$env:TEMP"
           gh release download latest --repo callmenet/chrome_plus_lite --pattern "chrome_plus_lite.zip" --dir "$env:TEMP"
@@ -158,7 +158,7 @@ jobs:
       run: |
         $releaseTag = "${{ steps.check-release.outputs.RELEASE_TAG }}"
         $zipPath = "$env:GITHUB_WORKSPACE\$releaseTag.zip"
-        Compress-Archive -Path "$env:GITHUB_WORKSPACE\Brave_Portable_${{ matrix.arch }}" -DestinationPath $zipPath -CompressionLevel Optimal
+        Compress-Archive -Path "$env:GITHUB_WORKSPACE\Brave_Origin_Portable_${{ matrix.arch }}" -DestinationPath $zipPath -CompressionLevel Optimal
         echo "ARCHIVE_PATH=$zipPath" >> $env:GITHUB_OUTPUT
         
     - name: Create Release and Upload Asset
