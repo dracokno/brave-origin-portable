@@ -20,7 +20,7 @@ function Get-BraveArchitecture ($path) {
 $currentDir = $PSScriptRoot
 $bravePath = Join-Path $currentDir "brave.exe"
 $arch = Get-BraveArchitecture $bravePath
-$apiUrl = "https://api.github.com/repos/callmenet/brave-portable/releases"
+$apiUrl = "https://api.github.com/repos/dracokno/brave-origin-portable/releases"
 $tempDir = Join-Path $env:TEMP "BraveUpdate_Staging"
 
 try {
@@ -34,8 +34,8 @@ try {
     Write-Host "Checking for updates ($arch)..." -ForegroundColor Cyan
     
     $releases = Invoke-RestMethod -Uri $apiUrl
-    $latest = $releases | Where-Object { $_.tag_name -like "brave-portable-${arch}_*" } | Sort-Object { 
-        if ($_.tag_name -match "brave-portable-${arch}_([0-9]+\.[0-9]+\.[0-9]+(?:\.[0-9]+)?)") { [System.Version]$matches[1] } else { [System.Version]"0.0.0.0" }
+    $latest = $releases | Where-Object { $_.tag_name -like "brave-origin-portable-${arch}_*" } | Sort-Object { 
+        if ($_.tag_name -match "brave-origin-portable-${arch}_([0-9]+\.[0-9]+\.[0-9]+(?:\.[0-9]+)?)") { [System.Version]$matches[1] } else { [System.Version]"0.0.0.0" }
     } -Descending | Select-Object -First 1
 
     if (-not $latest) { throw "No releases found for $arch" }
