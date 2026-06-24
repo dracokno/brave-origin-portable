@@ -115,8 +115,8 @@ jobs:
             Copy-Item "$liteExtract\chrome++.ini" "$applicationPath\chrome++.ini" -Force
           }
           
-          if (Test-Path "$env:GITHUB_WORKSPACE\update.bat") { Copy-Item "$env:GITHUB_WORKSPACE\update.bat" "$applicationPath\update.bat" -Force }
-          if (Test-Path "$env:GITHUB_WORKSPACE\debloat.reg") { Copy-Item "$env:GITHUB_WORKSPACE\debloat.reg" "$applicationPath\debloat.reg" -Force }
+          if (Test-Path "$env:GITHUB_WORKSPACE\run_update.bat") { Copy-Item "$env:GITHUB_WORKSPACE\run_update.bat" "$applicationPath\run_update.bat" -Force }
+          if (Test-Path "$env:GITHUB_WORKSPACE\update.ps1") { Copy-Item "$env:GITHUB_WORKSPACE\update.ps1" "$applicationPath\update.ps1" -Force }
           
           Copy-Item "$setdllExtract\${{ matrix.setdll_exe }}" "$applicationPath\setdll-local.exe" -Force
           Copy-Item "$liteExtract\${{ matrix.version_dll }}" "$applicationPath\version.dll" -Force
