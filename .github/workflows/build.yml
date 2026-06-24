@@ -1,11 +1,14 @@
 name: Brave Portable Auto Builder
+
 on:
   schedule:
     - cron: '0 0 * * 0'
   workflow_dispatch:
+
 permissions:
   contents: write
   packages: write
+
 jobs:
   check-and-build:
     runs-on: windows-latest
@@ -24,7 +27,7 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    - name: Get latest versions
+    - name: Get latest Brave version
       id: versions
       shell: powershell
       env:
@@ -33,12 +36,8 @@ jobs:
         try {
           $braveTag = gh release view --repo brave/brave-browser --json tagName --jq .tagName
           $braveVersion = $braveTag -replace '^v', ''
-          $chromePlusVersion = gh release view --repo Bush2021/chrome_plus --json tagName --jq .tagName
-          
-          if (-not $braveVersion -or -not $chromePlusVersion) { throw "Failed to fetch versions" }
-          
+          if (-not $braveVersion) { throw "Failed to fetch Brave version" }
           echo "BRAVE_VERSION=$braveVersion" >> $env:GITHUB_OUTPUT
-          echo "CHROMEPLUS_VERSION=$chromePlusVersion" >> $env:GITHUB_OUTPUT
         } catch {
           Write-Error $_.Exception.Message
           exit 1
@@ -48,9 +47,8 @@ jobs:
       id: check-release
       shell: powershell
       run: |
-        $releaseTag = "brave-portable-${{ matrix.arch }}_${{ steps.versions.outputs.BRAVE_VERSION }}_${{ steps.versions.outputs.CHROMEPLUS_VERSION }}"
+        $releaseTag = "brave-portable-${{ matrix.arch }}_${{ steps.versions.outputs.BRAVE_VERSION }}"
         echo "RELEASE_TAG=$releaseTag" >> $env:GITHUB_OUTPUT
-        
         try {
           $headers = @{
             'Authorization' = 'token ${{ secrets.GITHUB_TOKEN }}'
@@ -58,11 +56,9 @@ jobs:
           }
           $response = Invoke-RestMethod -Uri "https://api.github.com/repos/${{ github.repository }}/releases/tags/$releaseTag" -Headers $headers -ErrorAction Stop
           echo "RELEASE_EXISTS=true" >> $env:GITHUB_OUTPUT
-          Write-Host "Release $releaseTag already exists"
         } catch {
           if ($_.Exception.Response.StatusCode -eq 404) {
             echo "RELEASE_EXISTS=false" >> $env:GITHUB_OUTPUT
-            Write-Host "Release $releaseTag does not exist, will create new one"
           } else {
             Write-Error "Error checking release: $($_.Exception.Message)"
             exit 1
@@ -75,60 +71,79 @@ jobs:
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
+        function Safe-RemoveItem {
+          param ([string[]]$Paths)
+          foreach ($path in $Paths) {
+            if (Test-Path $path) {
+              for ($i = 1; $i -le 10; $i++) {
+                try { Remove-Item $path -Force -Recurse -ErrorAction Stop; break }
+                catch { Start-Sleep -Milliseconds 500 }
+              }
+            }
+          }
+        }
+
         try {
           $rootPath = "$env:GITHUB_WORKSPACE\Brave_Portable_${{ matrix.arch }}"
           $portablePath = "$rootPath\Brave"
+          $liteExtract = "$env:TEMP\chrome_plus_lite_out"
           $setdllExtract = "$env:TEMP\setdll_out"
           
           if (Test-Path $rootPath) { Remove-Item $rootPath -Recurse -Force }
           New-Item -ItemType Directory -Path $portablePath -Force | Out-Null
           
           $pattern = if ("${{ matrix.arch }}" -eq "x64") { "brave-v*-win32-x64.zip" } else { "brave-v*-win32-ia32.zip" }
+          
           gh release download --repo brave/brave-browser --pattern $pattern --dir "$env:TEMP"
+          gh release download latest --repo callmenet/chrome_plus_lite --pattern "chrome_plus_lite.zip" --dir "$env:TEMP"
           gh release download --repo Bush2021/chrome_plus --pattern "setdll.7z" --dir "$env:TEMP"
           
           $zipFile = Get-ChildItem "$env:TEMP" -Filter $pattern | Select-Object -First 1
           if ($null -eq $zipFile) { throw "Zip file not found" }
           
           & 7z x $zipFile.FullName "-o$portablePath" -y | Out-Null
+          & 7z x "$env:TEMP\chrome_plus_lite.zip" "-o$liteExtract" -y | Out-Null
           & 7z x "$env:TEMP\setdll.7z" "-o$setdllExtract" -y | Out-Null
           
           $braveExePath = Get-ChildItem -Path $portablePath -Filter "brave.exe" -Recurse | Select-Object -First 1 -ExpandProperty FullName
           if ($null -eq $braveExePath) { throw "brave.exe not found" }
           $applicationPath = Split-Path $braveExePath
           
-          Copy-Item "$env:GITHUB_WORKSPACE\chrome++.ini" "$applicationPath\chrome++.ini" -Force
-          Copy-Item "$env:GITHUB_WORKSPACE\update.bat" "$applicationPath\update.bat" -Force
-          Copy-Item "$env:GITHUB_WORKSPACE\debloat.reg" "$applicationPath\debloat.reg" -Force
+          if (Test-Path "$env:GITHUB_WORKSPACE\chrome++.ini") {
+            Copy-Item "$env:GITHUB_WORKSPACE\chrome++.ini" "$applicationPath\chrome++.ini" -Force
+          } else {
+            Copy-Item "$liteExtract\chrome++.ini" "$applicationPath\chrome++.ini" -Force
+          }
+          
+          if (Test-Path "$env:GITHUB_WORKSPACE\update.bat") { Copy-Item "$env:GITHUB_WORKSPACE\update.bat" "$applicationPath\update.bat" -Force }
+          if (Test-Path "$env:GITHUB_WORKSPACE\debloat.reg") { Copy-Item "$env:GITHUB_WORKSPACE\debloat.reg" "$applicationPath\debloat.reg" -Force }
+          
           Copy-Item "$setdllExtract\${{ matrix.setdll_exe }}" "$applicationPath\setdll-local.exe" -Force
-          Copy-Item "$setdllExtract\${{ matrix.version_dll }}" "$applicationPath\version.dll" -Force
+          Copy-Item "$liteExtract\${{ matrix.version_dll }}" "$applicationPath\version.dll" -Force
           
           $braveVersion = "${{ steps.versions.outputs.BRAVE_VERSION }}"
-          $versionDir = "$applicationPath\$braveVersion"
-          $extensionsPath = "$versionDir\default_apps"
+          $extensionsPath = "$applicationPath\$braveVersion\default_apps"
           if (Test-Path $extensionsPath) {
             Get-ChildItem $extensionsPath -Directory | Where-Object {
               $_.Name -match "(brave|rewards|wallet|vpn|talk|news|playlist|search|leo|dashboard|sidebar)"
-            } | ForEach-Object {
-              Remove-Item $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
-            }
+            } | ForEach-Object { Remove-Item $_.FullName -Recurse -Force -ErrorAction SilentlyContinue }
           }
           
           Push-Location $applicationPath
-          & ".\setdll-local.exe" /d:version.dll brave.exe
-          if ($LASTEXITCODE -ne 0) {
+          $process = Start-Process -FilePath ".\setdll-local.exe" -ArgumentList "/d:version.dll", "brave.exe" -Wait -NoNewWindow -PassThru
+          if ($process.ExitCode -ne 0) {
               Write-Error "setdll failed"
               Pop-Location
-              if (Test-Path "$applicationPath\brave.exe#") { Remove-Item "$applicationPath\brave.exe#" -Force }
+              Safe-RemoveItem -Paths "$applicationPath\brave.exe#"
               exit 1
           }
           Pop-Location
-          Start-Sleep -Seconds 5
           
-          Remove-Item $setdllExtract -Recurse -Force -ErrorAction SilentlyContinue
-          Remove-Item $zipFile.FullName -Force -ErrorAction SilentlyContinue
-          Remove-Item "$env:TEMP\setdll.7z" -Force -ErrorAction SilentlyContinue
-          Remove-Item "$applicationPath\setdll-local.exe", "$applicationPath\brave.exe~" -Force -ErrorAction SilentlyContinue
+          Safe-RemoveItem -Paths @(
+            $liteExtract, $setdllExtract, $zipFile.FullName,
+            "$env:TEMP\chrome_plus_lite.zip", "$env:TEMP\setdll.7z",
+            "$applicationPath\setdll-local.exe", "$applicationPath\brave.exe~", "$applicationPath\brave.exe#"
+          )
         } catch {
           Write-Error $_.Exception.Message
           exit 1
@@ -141,10 +156,7 @@ jobs:
       run: |
         $releaseTag = "${{ steps.check-release.outputs.RELEASE_TAG }}"
         $zipPath = "$env:GITHUB_WORKSPACE\$releaseTag.zip"
-        $sourcePath = "$env:GITHUB_WORKSPACE\Brave_Portable_${{ matrix.arch }}"
-        
-        Compress-Archive -Path $sourcePath -DestinationPath $zipPath -CompressionLevel Optimal
-        Write-Host "Created archive: $zipPath"
+        Compress-Archive -Path "$env:GITHUB_WORKSPACE\Brave_Portable_${{ matrix.arch }}" -DestinationPath $zipPath -CompressionLevel Optimal
         echo "ARCHIVE_PATH=$zipPath" >> $env:GITHUB_OUTPUT
         
     - name: Create Release and Upload Asset
@@ -155,20 +167,11 @@ jobs:
       run: |
         $releaseTag = "${{ steps.check-release.outputs.RELEASE_TAG }}"
         $braveVersion = "${{ steps.versions.outputs.BRAVE_VERSION }}"
-        $chromePlusVersion = "${{ steps.versions.outputs.CHROMEPLUS_VERSION }}"
         $archivePath = "${{ steps.create-archive.outputs.ARCHIVE_PATH }}"
-        
-        $releaseBody = "**Brave Portable with Chrome++ Auto Build**`n`n**Architecture:** ${{ matrix.arch }}`n**Brave Version:** $braveVersion`n**Chrome++ Version:** $chromePlusVersion`n`n## What's Included`n- Brave Browser Portable (${{ matrix.arch }})`n- Chrome++ enhancements`n- Debloated configuration`n`n## Installation`n1. Download the ZIP file`n2. Extract`n3. Run Brave_Portable_${{ matrix.arch }}\Brave\brave.exe`n`n---`n*This release was automatically generated by GitHub Actions*"
-        
-        Write-Host "Creating release: $releaseTag" -ForegroundColor Yellow
+        $releaseBody = "**Brave Portable with Chrome++ Lite**`n`n- **Architecture:** ${{ matrix.arch }}`n- **Brave Version:** $braveVersion`n- **Chrome++ Lite:** latest"
         gh release create $releaseTag --title "$releaseTag" --notes $releaseBody --repo ${{ github.repository }} $archivePath
-        Write-Host "Release created successfully!" -ForegroundColor Green
         
     - name: Summary
       shell: powershell
       run: |
-        if ("${{ steps.check-release.outputs.RELEASE_EXISTS }}" -eq "true") {
-          Write-Host "Release ${{ steps.check-release.outputs.RELEASE_TAG }} already exists - skipped" -ForegroundColor Yellow
-        } else {
-          Write-Host "Successfully created release ${{ steps.check-release.outputs.RELEASE_TAG }}" -ForegroundColor Green
-        }
+        Write-Host "Done processing ${{ steps.check-release.outputs.RELEASE_TAG }}"
