@@ -121,12 +121,14 @@ jobs:
           Copy-Item "$setdllExtract\${{ matrix.setdll_exe }}" "$applicationPath\setdll-local.exe" -Force
           Copy-Item "$liteExtract\${{ matrix.version_dll }}" "$applicationPath\version.dll" -Force
           
-          $braveVersion = "${{ steps.versions.outputs.BRAVE_VERSION }}"
-          $extensionsPath = "$applicationPath\$braveVersion\default_apps"
-          if (Test-Path $extensionsPath) {
-            Get-ChildItem $extensionsPath -Directory | Where-Object {
-              $_.Name -match "(brave|rewards|wallet|vpn|talk|news|playlist|search|leo|dashboard|sidebar)"
-            } | ForEach-Object { Remove-Item $_.FullName -Recurse -Force -ErrorAction SilentlyContinue }
+          $versionFolder = Get-ChildItem -Path $applicationPath -Directory | Where-Object { $_.Name -match "^\d+\.\d+\.\d+\.\d+$" } | Select-Object -First 1
+          if ($null -ne $versionFolder) {
+            $extensionsPath = Join-Path $versionFolder.FullName "default_apps"
+            if (Test-Path $extensionsPath) {
+              Get-ChildItem $extensionsPath -Directory | Where-Object {
+                $_.Name -match "(brave|rewards|wallet|vpn|talk|news|playlist|search|leo|dashboard|sidebar)"
+              } | ForEach-Object { Remove-Item $_.FullName -Recurse -Force -ErrorAction SilentlyContinue }
+            }
           }
           
           Push-Location $applicationPath

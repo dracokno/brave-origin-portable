@@ -24,12 +24,18 @@ $apiUrl = "https://api.github.com/repos/callmenet/brave-portable/releases"
 $tempDir = Join-Path $env:TEMP "BraveUpdate_Staging"
 
 try {
-    $currentVersion = if (Test-Path $bravePath) { (Get-Item $bravePath).VersionInfo.ProductVersion } else { "Not installed" }
+    $rawCurrentVersion = if (Test-Path $bravePath) { (Get-Item $bravePath).VersionInfo.ProductVersion } else { "Not installed" }
+    
+    $currentVersion = $rawCurrentVersion
+    if ($currentVersion -match '^\d+\.(\d+\.\d+\.\d+)$') {
+        $currentVersion = $matches[1]
+    }
+    
     Write-Host "Checking for updates ($arch)..." -ForegroundColor Cyan
     
     $releases = Invoke-RestMethod -Uri $apiUrl
     $latest = $releases | Where-Object { $_.tag_name -like "brave-portable-${arch}_*" } | Sort-Object { 
-        if ($_.tag_name -match "brave-portable-${arch}_([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)") { [System.Version]$matches[1] } else { [System.Version]"0.0.0.0" }
+        if ($_.tag_name -match "brave-portable-${arch}_([0-9]+\.[0-9]+\.[0-9]+(?:\.[0-9]+)?)") { [System.Version]$matches[1] } else { [System.Version]"0.0.0.0" }
     } -Descending | Select-Object -First 1
 
     if (-not $latest) { throw "No releases found for $arch" }
@@ -69,8 +75,8 @@ try {
     Copy-Item (Join-Path $extractedBrave.FullName "brave.exe") -Destination $currentDir -Force
     Copy-Item (Join-Path $extractedBrave.FullName "version.dll") -Destination $currentDir -Force
 
-    if ($currentVersion -ne "Not installed" -and $currentVersion -ne $newVersionFolder.Name) {
-        $oldPath = Join-Path $currentDir $currentVersion
+    if ($rawCurrentVersion -ne "Not installed" -and $rawCurrentVersion -ne $newVersionFolder.Name) {
+        $oldPath = Join-Path $currentDir $rawCurrentVersion
         if (Test-Path $oldPath) { Remove-Item $oldPath -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
